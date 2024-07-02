@@ -27,42 +27,50 @@ impl Upgrade {
         }
     }
 
-    fn generate_version(&self, id: &String, origin: &Version) -> modules::Version {
+    fn generate_version(&self, id: &String, origin: &Version) -> Option<modules::Version> {
         let module_dir = self.modules_dir.join(id);
         let base_url = &self.repository.setting.base_url;
         let module_path = format!("{}/{}", constant::MODULES_DIR, id);
-        
+
         let zip_file = module_dir.join(&origin.zip_file);
-        let zip_url = if zip_file.is_file() && zip_file.exists() {
+        let zip_url = if zip_file.is_file() {
             format!("{base_url}/{module_path}/{}", origin.zip_file)
-        } else { 
-            String::new()
+        } else {
+            return None;
         };
-        
+
         let changelog = module_dir.join(&origin.changelog);
-        let changelog = if changelog.is_file() && changelog.exists() {
+        let changelog = if changelog.is_file() {
             format!("{base_url}/{module_path}/{}", origin.changelog)
         } else {
             String::new()
         };
 
-        modules::Version {
+        Some(modules::Version {
             timestamp: origin.timestamp,
             version: origin.version.to_owned(),
             version_code: origin.version_code,
             zip_url,
             changelog,
-        }
+        })
     }
 
-    fn generate_module(&self, track: Track, origin: &Module) -> modules::Module {
-        let versions = track
+    fn generate_module(&self, track: Track, origin: &Module) -> Option<modules::Module> {
+        let versions: Vec<modules::Version> = track
             .versions
             .iter()
-            .map(|v| self.generate_version(&origin.id, v))
+            .filter_map(|v| self.generate_version(&origin.id, v))
             .collect();
 
-        modules::Module::build(track.module, origin.metadata.to_owned(), versions)
+        if versions.is_empty() {
+            return None;
+        }
+
+        Some(modules::Module::build(
+            track.module,
+            origin.metadata.to_owned(),
+            versions,
+        ))
     }
 
     pub fn generate_modules(&self, origins: &[Arc<Module>]) -> Vec<modules::Module> {
@@ -71,7 +79,7 @@ impl Upgrade {
         for origin in origins {
             let module_dir = self.modules_dir.join(&origin.id);
             let track_json = module_dir.join(constant::TRACK_JSON);
-            
+
             if !track_json.exists() {
                 tracing::warn!(target: "Upgrade::generate_modules", id = %origin.id, "No track found");
                 continue;
@@ -85,7 +93,9 @@ impl Upgrade {
                 }
             };
 
-            modules.push(self.generate_module(track, origin));
+            if let Some(module) = self.generate_module(track, origin) {
+                modules.push(module)
+            }
         }
 
         modules
